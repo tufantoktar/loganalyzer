@@ -39,19 +39,49 @@ HTTP DURUM KODLARI (yorumlarken bunlari kullan):
 - 429 = hiz siniri asildi; istek sikligi fazla
 - 5xx = sunucu tarafinda hata; istemci kodu suclu degil
 
-CIKTI FORMATI (tam olarak bu 3 bolum, baska hicbir sey yazma):
+Cevabin 3 bolumden olussun: "## Ozet", "## Olasi Kok Nedenler", "## Onerilen Aksiyonlar".
+Asagida ornek bir soru-cevap var; ayni bicimde, ama KENDI verinle cevap ver.
+Ornekteki sayilari ASLA kopyalama.
+"""
 
-## Ozet
-En fazla 3 cumle. En buyuk hata imzasi hangisi ve toplam kac kez gorulmus.
+# --- Few-shot ornegi -------------------------------------------------------
+# Kucuk modeller soyut format tarifini "icerik" sanip aynen kopyaliyor
+# (qwen2.5:1.5b bunu yapti). Doldurulmus bir ornek gostermek tek etkili cozum.
+# Ornek veri gercek veriden BILEREK cok farkli: sayilari kopyalarsa fark edilir.
+FEWSHOT_USER = """Log ozeti (JSON):
+```json
+{
+  "total_lines": 8000,
+  "level_counts": {"INFO": 7160, "WARN": 600, "ERROR": 240},
+  "services": {"api-gateway": 4100, "order-svc": 2400},
+  "top_errors": [
+    {"signature": "GET /orders failed: HTTP503", "count": 180},
+    {"signature": "Query timeout after <n>", "count": 55},
+    {"signature": "Redis connection refused", "count": 5}
+  ],
+  "error_rate": 0.03
+}
+```
+
+Bu ozeti yukaridaki 3 bolumlu formatta degerlendir."""
+
+FEWSHOT_ASSISTANT = """## Ozet
+En buyuk hata imzasi `GET /orders failed: HTTP503`, 180 kez gorulmus.
+Toplam 240 hata satirinin buyuk bolumunu tek basina olusturuyor.
+Diger iki imza dusuk hacimli.
 
 ## Olasi Kok Nedenler
-En fazla 3 madde. Her madde SU KALIBI kullansin:
-- `<imza>` (<adet> kez): <durum koduna gore ne anlama geldigi>
+- `GET /orders failed: HTTP503` (180 kez): 503 sunucu tarafi hatadir; ustteki
+  servis gecici olarak istekleri karsilayamiyor olabilir.
+- `Query timeout after <n>` (55 kez): sorgular sure sinirini asiyor; veritabani
+  yavaslamis ya da sorgu plani bozulmus olabilir.
+- `Redis connection refused` (5 kez): hacmi dusuk; onbellek servisine erisim
+  kisa sureli kesilmis olabilir.
 
 ## Onerilen Aksiyonlar
-En fazla 3 madde. Her madde bir EYLEM fiiliyle bassin:
-Kontrol et / Ekle / Dusur / Sinirla / Kaldir / Ayir
-"""
+- Kontrol et: ustteki servisin saglik durumunu ve 503 donen zaman araligini.
+- Sinirla: zaman asimina ugrayan sorgular icin sure ve eszamanlilik limitini.
+- Ekle: Redis baglantisina yeniden deneme ve devre kesici."""
 
 
 class OllamaError(RuntimeError):
@@ -116,6 +146,10 @@ class OllamaClient:
             "stream": False,
             "messages": [
                 {"role": "system", "content": system},
+                # Few-shot: modele format tarif etmek yerine doldurulmus
+                # bir ornek gosteriyoruz. Kucuk modellerde fark buyuk.
+                {"role": "user", "content": FEWSHOT_USER},
+                {"role": "assistant", "content": FEWSHOT_ASSISTANT},
                 {"role": "user", "content": user_prompt},
             ],
             "options": {"temperature": 0, "num_predict": 700},

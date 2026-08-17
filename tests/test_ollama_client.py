@@ -84,6 +84,22 @@ class TestChat:
         assert payload["messages"][0]["role"] == "system"
 
     @patch("loganalyzer.ollama_client.requests.post")
+    def test_fewshot_example_included(self, post):
+        post.return_value = _response({"message": {"content": "ok"}})
+        OllamaClient().chat("gercek ozet")
+        roles = [m["role"] for m in post.call_args.kwargs["json"]["messages"]]
+        # system -> ornek soru -> ornek cevap -> gercek soru
+        assert roles == ["system", "user", "assistant", "user"]
+
+    @patch("loganalyzer.ollama_client.requests.post")
+    def test_fewshot_numbers_absent_from_real_data(self, post):
+        # Ornek sayilar gercek veride bulunmamali; model ornegi kopyalarsa
+        # find_invented_numbers yakalasin diye bilerek boyle secildi.
+        from loganalyzer.ollama_client import FEWSHOT_ASSISTANT
+
+        assert find_invented_numbers(FEWSHOT_ASSISTANT, ANALYSIS)
+
+    @patch("loganalyzer.ollama_client.requests.post")
     def test_empty_response_raises(self, post):
         post.return_value = _response({"message": {"content": "   "}})
         with pytest.raises(OllamaError, match="bos cevap"):

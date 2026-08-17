@@ -18,6 +18,11 @@ include = ["loganalyzer*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Proje kokunu import yoluna ekle.
+# "python -m pytest" bunu kendiliginden yapar, duz "pytest" YAPMAZ.
+# CI duz "pytest" calistirdigi icin bu satir olmadan
+# ModuleNotFoundError: No module named 'loganalyzer' aliniyor.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 110
