@@ -1,0 +1,204 @@
+# =============================================================================
+# loganalyzer CI/CD
+#
+# Gerekli CI/CD Variables (Settings > CI/CD > Variables):
+#   NEXUS_DOCKER_REGISTRY  ornek: nexus.sirket.local:8082   (masked degil, protected)
+#   NEXUS_USER             ornek: ci-publisher              (masked)
+#   NEXUS_PASSWORD         ...                              (masked, protected)
+#   NEXUS_PYPI_INDEX       (opsiyonel) http://nexus:8081/repository/pypi-proxy/simple
+#
+# Nexus self-signed sertifika kullaniyorsa: registry'yi runner'da
+# insecure-registries'e ekle ya da CA'yi imaja mount et.
+# =============================================================================
+
+stages:
+  - lint
+  - test
+  - build
+  - scan
+  - publish
+  - release
+
+variables:
+  IMAGE_NAME: loganalyzer
+  # dind ile TLS: overlay2 + TLS sertifika dizini
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_DRIVER: overlay2
+  # Nexus'ta ayni imajin iki adresi: commit sha (izlenebilirlik) + tag (kullanim)
+  IMAGE_SHA: "${NEXUS_DOCKER_REGISTRY}/${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
+  IMAGE_BRANCH: "${NEXUS_DOCKER_REGISTRY}/${IMAGE_NAME}:${CI_COMMIT_REF_SLUG}"
+  PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
+
+default:
+  interruptible: true
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+cache:
+  key:
+    files:
+      - requirements-dev.txt
+  paths:
+    - .cache/pip
+
+# --- ortak parcalar -----------------------------------------------------------
+
+.python:
+  image: python:3.12-slim
+  before_script:
+    - pip install --quiet -r requirements-dev.txt
+      ${NEXUS_PYPI_INDEX:+--index-url "$NEXUS_PYPI_INDEX" --trusted-host "$(echo "$NEXUS_PYPI_INDEX" | awk -F[/:] '{print $4}')"}
+
+.docker:
+  image: docker:27-cli
+  services:
+    - docker:27-dind
+  before_script:
+    - |
+      if [ -z "${NEXUS_DOCKER_REGISTRY}" ] || [ -z "${NEXUS_USER}" ]; then
+        echo "HATA: NEXUS_* degiskenleri tanimli degil"; exit 1
+      fi
+    - echo "${NEXUS_PASSWORD}" | docker login "${NEXUS_DOCKER_REGISTRY}" -u "${NEXUS_USER}" --password-stdin
+
+# --- lint ---------------------------------------------------------------------
+
+ruff:
+  stage: lint
+  extends: .python
+  script:
+    - ruff check loganalyzer tests
+    - ruff format --check loganalyzer tests
+
+shellcheck:
+  stage: lint
+  image: koalaman/shellcheck-alpine:stable
+  before_script: []
+  script:
+    - shellcheck --severity=warning scripts/*.sh
+
+hadolint:
+  stage: lint
+  image: hadolint/hadolint:latest-debian
+  before_script: []
+  script:
+    # DL3008: apt paketlerinde versiyon pinlemiyoruz, bilincli tercih.
+    - hadolint --ignore DL3008 Dockerfile
+
+# --- test ---------------------------------------------------------------------
+
+pytest:
+  stage: test
+  extends: .python
+  script:
+    - pytest -v --cov=loganalyzer --cov-report=term --cov-report=xml --junitxml=junit.xml
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    expire_in: 1 week
+
+smoke:
+  stage: test
+  extends: .python
+  script:
+    # Ollama CI'da yok -> --no-llm. Amac CLI'nin uctan uca calistigini gormek.
+    - bash scripts/gen_sample_logs.sh sample_logs/ci.log 300
+    - python -m loganalyzer sample_logs/ci.log --no-llm -f json -o reports/ci-report.json
+    - python -c "import json,sys; d=json.load(open('reports/ci-report.json')); assert d['analysis']['total_lines']==300, d['analysis']['total_lines']; print('OK', d['analysis']['level_counts'])"
+  artifacts:
+    paths:
+      - reports/
+    expire_in: 1 week
+
+# --- build --------------------------------------------------------------------
+
+build-image:
+  stage: build
+  extends: .docker
+  script:
+    - docker build
+        --build-arg PIP_INDEX_URL="${NEXUS_PYPI_INDEX:-https://pypi.org/simple}"
+        --label "org.opencontainers.image.revision=${CI_COMMIT_SHA}"
+        --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        --cache-from "${IMAGE_BRANCH}"
+        -t "${IMAGE_SHA}" .
+    # Imaj gercekten calisiyor mu? Push etmeden once dogrula.
+    - docker run --rm -e WAIT_FOR_OLLAMA=false "${IMAGE_SHA}" --version
+    - docker save "${IMAGE_SHA}" -o image.tar
+  artifacts:
+    paths:
+      - image.tar
+    expire_in: 1 day
+
+# --- scan ---------------------------------------------------------------------
+
+trivy:
+  stage: scan
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  needs: ["build-image"]
+  script:
+    - trivy image --input image.tar --format table --severity HIGH,CRITICAL --exit-code 0
+    # Merge request'lerde CRITICAL varsa kir, main'de sadece raporla.
+    - trivy image --input image.tar --severity CRITICAL --exit-code 1 --ignore-unfixed
+  allow_failure: true
+
+# --- publish ------------------------------------------------------------------
+
+push-nexus:
+  stage: publish
+  extends: .docker
+  needs: ["build-image", "pytest", "smoke"]
+  script:
+    - docker load -i image.tar
+    - docker push "${IMAGE_SHA}"
+    - docker tag "${IMAGE_SHA}" "${IMAGE_BRANCH}"
+    - docker push "${IMAGE_BRANCH}"
+    - echo "Nexus'a itildi -> ${IMAGE_SHA}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# --- release ------------------------------------------------------------------
+
+release-latest:
+  stage: release
+  extends: .docker
+  needs: ["push-nexus"]
+  script:
+    - docker pull "${IMAGE_SHA}"
+    - docker tag "${IMAGE_SHA}" "${NEXUS_DOCKER_REGISTRY}/${IMAGE_NAME}:${CI_COMMIT_TAG}"
+    - docker tag "${IMAGE_SHA}" "${NEXUS_DOCKER_REGISTRY}/${IMAGE_NAME}:latest"
+    - docker push "${NEXUS_DOCKER_REGISTRY}/${IMAGE_NAME}:${CI_COMMIT_TAG}"
+    - docker push "${NEXUS_DOCKER_REGISTRY}/${IMAGE_NAME}:latest"
+  rules:
+    - if: $CI_COMMIT_TAG
+
+# --- opsiyonel: gecelik gercek log analizi ------------------------------------
+# Ollama'nin kurulu oldugu bir runner'da (tag: ollama) calisir.
+nightly-analysis:
+  stage: release
+  image: "${IMAGE_SHA}"
+  tags: ["ollama"]
+  needs: ["push-nexus"]
+  variables:
+    OLLAMA_HOST: "http://ollama.sirket.local:11434"
+    GIT_STRATEGY: none
+  script:
+    - /app/scripts/collect_logs.sh -s /var/log/myapp -o /tmp/merged.log -H 24
+    - python -m loganalyzer /tmp/merged.log -o report.md --fail-over 0.05
+  artifacts:
+    paths:
+      - report.md
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true

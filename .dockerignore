@@ -1,0 +1,13 @@
+.git
+.gitlab-ci.yml
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+reports/
+sample_logs/
+*.md
+!requirements.txt
+.env

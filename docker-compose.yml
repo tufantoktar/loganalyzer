@@ -1,0 +1,78 @@
+# Lokal gelistirme stack'i: Ollama + Nexus + uygulama.
+#
+#   docker compose up -d ollama nexus     # altyapiyi kaldir
+#   docker compose run --rm analyzer /data/app.log -o /reports/report.md
+#
+# Nexus ilk acilista ~2-3 dk suruyor. Admin parolasi:
+#   docker compose exec nexus cat /nexus-data/admin.password
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: la-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      # Ollama imajinda curl yok; /dev/tcp ile port kontrolu yeterli.
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/11434' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # Modeli bir kere indirip cikan yardimci servis.
+  #   docker compose run --rm model-puller
+  model-puller:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "llama3.2:3b"]
+    profiles: ["setup"]
+
+  nexus:
+    image: sonatype/nexus3:latest
+    container_name: la-nexus
+    ports:
+      - "8081:8081"   # web UI + API
+      - "8082:8082"   # docker hosted registry (Nexus'ta manuel acilmali)
+    volumes:
+      - nexus-data:/nexus-data
+    environment:
+      INSTALL4J_ADD_VM_PARAMS: "-Xms1g -Xmx1g -XX:MaxDirectMemorySize=2g"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/service/rest/v1/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+
+  analyzer:
+    build:
+      context: .
+      args:
+        # Nexus PyPI proxy'yi acinca burayi degistir:
+        # PIP_INDEX_URL: http://nexus:8081/repository/pypi-proxy/simple
+        PIP_INDEX_URL: https://pypi.org/simple
+    image: ${NEXUS_DOCKER_REGISTRY:-local}/loganalyzer:${TAG:-dev}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      WAIT_TIMEOUT: "120"
+    volumes:
+      - ./sample_logs:/data:ro
+      - ./reports:/reports
+
+volumes:
+  ollama-models:
+  nexus-data:
