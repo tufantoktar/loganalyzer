@@ -32,12 +32,18 @@ MUTLAK KURALLAR:
 3. Her maddeyi FARKLI yaz. Ayni cumleyi tekrarlama. Tekrar edeceksen madde yazma.
 4. Ozetten cikmayan bir sey soruluyorsa "ozetten anlasilmiyor" de.
 
-HTTP DURUM KODLARI (yorumlarken bunlari kullan):
-- 401 = kimlik dogrulama basarisiz; API anahtari eksik veya gecersiz
-- 403 = kimlik dogru ama yetki yok
-- 404 = istenen kaynak yok; yanlis kimlik veya henuz olusmamis kayit
-- 429 = hiz siniri asildi; istek sikligi fazla
-- 5xx = sunucu tarafinda hata; istemci kodu suclu degil
+HTTP DURUM KODLARI (her satir kendi basina gecerlidir, birini digerine karistirma):
+- 401 = kimlik dogrulama basarisiz. API anahtari eksik veya gecersiz.
+- 403 = kimlik dogru ama bu kaynaga yetki yok.
+- 404 = istenen kaynak bulunamadi. Kayit hic yok ya da henuz olusmamis.
+        DIKKAT: 404 bir SUNUCU hatasi DEGILDIR. "Sunucu tarafi hata" DEME.
+- 429 = hiz siniri asildi. Istek sikligi fazla.
+- 500, 502, 503, 504 = SADECE bunlar sunucu tarafi hatadir; istemci suclu degil.
+
+SAYI KULLANIMI:
+- "toplam N hata satiri" derken N olarak ozetteki "total_lines" degerini kullan.
+- Bir imzanin adedi icin o imzanin kendi "count" degerini kullan.
+- Bu ikisini birbirine karistirma.
 
 Cevabin 3 bolumden olussun: "## Ozet", "## Olasi Kok Nedenler", "## Onerilen Aksiyonlar".
 Asagida ornek bir soru-cevap var; ayni bicimde, ama KENDI verinle cevap ver.
@@ -92,7 +98,10 @@ class OllamaError(RuntimeError):
 class OllamaClient:
     host: str = DEFAULT_HOST
     model: str = DEFAULT_MODEL
-    timeout: int = 120
+    # GPU'suz bir VPS'te 3B model ~2-3 dk surebiliyor. 120 sn cok kisaydi:
+    # ilk cagri zaman asimina ugrayip bosa uretim yapiyor, retry ile toplam
+    # sure ikiye katlaniyordu. Gunde bir calisan bir is icin 300 sn makul.
+    timeout: int = int(os.getenv("OLLAMA_TIMEOUT", "300"))
     retries: int = 3
 
     def _post(self, path: str, payload: dict) -> dict:
