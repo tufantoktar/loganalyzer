@@ -6,7 +6,57 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from loganalyzer.ollama_client import OllamaClient, OllamaError, build_prompt
+from loganalyzer.ollama_client import (
+    OllamaClient,
+    OllamaError,
+    build_prompt,
+    find_invented_numbers,
+)
+
+# qwen2.5:1.5b'nin gercekte urettigi hatali cikti - regresyon icin sabit tutuluyor
+ANALYSIS = {
+    "total_lines": 31527,
+    "level_counts": {"ERROR": 31527},
+    "services": {"recorder:book": 15757},
+    "top_errors": [
+        {"signature": "CLOB /book failed: HTTP404", "count": 30314},
+        {"signature": "CLOB /trades failed: HTTP401", "count": 1200},
+    ],
+    "error_rate": 1.0,
+}
+
+
+class TestFindInventedNumbers:
+    def test_catches_real_hallucination(self):
+        # Model 31527'yi 100 ile carpip "3.152.700 defa" yazmisti
+        verdict = "Bu hata 3.152.700 defa gerceklesmistir."
+        assert find_invented_numbers(verdict, ANALYSIS) == ["3.152.700"]
+
+    def test_accepts_numbers_from_summary(self):
+        verdict = "30314 kez HTTP404, 1200 kez HTTP401 gorulmus. Toplam 31527 satir."
+        assert find_invented_numbers(verdict, ANALYSIS) == []
+
+    def test_turkish_thousand_separator_accepted(self):
+        assert find_invented_numbers("Toplam 31.527 satir var.", ANALYSIS) == []
+
+    def test_small_numbers_ignored(self):
+        # madde numarasi, yuzde, durum kodu -- yanlis alarm vermemeli
+        verdict = "1. HTTP 404 hatasi %96 oraninda. 2. HTTP 401 hatasi."
+        assert find_invented_numbers(verdict, ANALYSIS) == []
+
+    def test_empty_verdict(self):
+        assert find_invented_numbers("", ANALYSIS) == []
+
+    def test_multiple_inventions_deduplicated(self):
+        verdict = "999999 kez ve yine 999999 kez, ayrica 888888 kez."
+        assert find_invented_numbers(verdict, ANALYSIS) == ["888888", "999999"]
+
+    def test_output_is_deterministic(self):
+        # set() iterasyonu sizmamali; rapor her calistirmada ayni olmali
+        verdict = "777777, 555555, 666666, 12345678 sayilari."
+        runs = [find_invented_numbers(verdict, ANALYSIS) for _ in range(5)]
+        assert all(r == runs[0] for r in runs)
+        assert runs[0] == ["12345678", "555555", "666666", "777777"]
 
 
 def _response(payload, status=200):

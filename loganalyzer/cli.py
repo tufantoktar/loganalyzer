@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .ollama_client import OllamaClient, OllamaError, build_prompt
+from .ollama_client import OllamaClient, OllamaError, build_prompt, find_invented_numbers
 from .parser import analyze, parse_lines
 from .report import to_json, to_markdown
 
@@ -85,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
     verdict = None
     model_name = None
+    invented: list[str] = []
     if not args.no_llm:
         client = OllamaClient(
             host=args.ollama_host or OllamaClient.host,
@@ -99,13 +100,26 @@ def main(argv: list[str] | None = None) -> int:
                 if args.pull:
                     client.ensure_model()
                 verdict = client.chat(build_prompt(analysis.to_dict()))
+                invented = find_invented_numbers(verdict, analysis.to_dict())
+                if invented:
+                    log.warning(
+                        "Model ozette olmayan %d sayi uretti: %s -- rapora uyari eklendi",
+                        len(invented),
+                        ", ".join(invented[:5]),
+                    )
             except OllamaError as exc:
                 log.error("LLM analizi basarisiz: %s", exc)
                 model_name = None
 
     source = str(args.path) if len(files) == 1 else f"{args.path} ({len(files)} dosya)"
     renderer = to_json if args.format == "json" else to_markdown
-    report = renderer(analysis, llm_verdict=verdict, source=source, model=model_name)
+    report = renderer(
+        analysis,
+        llm_verdict=verdict,
+        source=source,
+        model=model_name,
+        invented_numbers=invented,
+    )
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

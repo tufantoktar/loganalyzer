@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 
@@ -20,22 +21,36 @@ log = logging.getLogger(__name__)
 DEFAULT_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
-SYSTEM_PROMPT = """Sen bir SRE asistanisin. Sana bir log dosyasinin ISTATISTIKSEL OZETI verilecek.
-Ham log verilmiyor; sadece sayilar ve hata imzalari var.
+SYSTEM_PROMPT = """Sen bir SRE asistanisin. Sana bir log dosyasinin ISTATISTIKSEL OZETI (JSON)
+verilecek. Ham log YOK; elinde sadece sayilar ve hata imzalari var.
 
-Kurallar:
-- Sana verilmeyen hicbir sayiyi uydurma. Sadece ozetteki verilere dayan.
-- Kesin konusma; "muhtemelen", "isaret ediyor" gibi ifadeler kullan.
-- Cevabi tam olarak su 3 bolumde ver:
+MUTLAK KURALLAR:
+1. SADECE ozette yazan sayilari kullan. Carpma, toplama, oran hesaplama, tahmin etme.
+   Ozette olmayan bir sayi yazarsan cevap gecersizdir.
+2. Bilmedigin kisaltmayi ACMA, oldugu gibi birak. Ornek: "CLOB" -> "CLOB" yaz,
+   ne anlama geldigini uydurma.
+3. Her maddeyi FARKLI yaz. Ayni cumleyi tekrarlama. Tekrar edeceksen madde yazma.
+4. Ozetten cikmayan bir sey soruluyorsa "ozetten anlasilmiyor" de.
+
+HTTP DURUM KODLARI (yorumlarken bunlari kullan):
+- 401 = kimlik dogrulama basarisiz; API anahtari eksik veya gecersiz
+- 403 = kimlik dogru ama yetki yok
+- 404 = istenen kaynak yok; yanlis kimlik veya henuz olusmamis kayit
+- 429 = hiz siniri asildi; istek sikligi fazla
+- 5xx = sunucu tarafinda hata; istemci kodu suclu degil
+
+CIKTI FORMATI (tam olarak bu 3 bolum, baska hicbir sey yazma):
 
 ## Ozet
-2-3 cumle. Sistemin genel sagligi.
+En fazla 3 cumle. En buyuk hata imzasi hangisi ve toplam kac kez gorulmus.
 
 ## Olasi Kok Nedenler
-En fazla 3 madde. Her madde: hangi hata imzasina dayandigini belirt.
+En fazla 3 madde. Her madde SU KALIBI kullansin:
+- `<imza>` (<adet> kez): <durum koduna gore ne anlama geldigi>
 
 ## Onerilen Aksiyonlar
-En fazla 3 madde. Somut, uygulanabilir. Log/metrik/config seviyesinde.
+En fazla 3 madde. Her madde bir EYLEM fiiliyle bassin:
+Kontrol et / Ekle / Dusur / Sinirla / Kaldir / Ayir
 """
 
 
@@ -110,6 +125,34 @@ class OllamaClient:
         if not content:
             raise OllamaError(f"Model bos cevap dondu: {data}")
         return content
+
+
+def find_invented_numbers(verdict: str, analysis_dict: dict) -> list[str]:
+    """Modelin ozette olmayan sayi uydurup uydurmadigini denetler.
+
+    Kucuk modeller "sayi uydurma" talimatini duzenli olarak cigniyor
+    (ornek: 31527'yi 100 ile carpip 3.152.700 yazmak). Rapordaki sayilar
+    karar vermek icin kullanilacagi icin bu sessizce gecilemez.
+
+    Donen liste bostan farkliysa rapora uyari basilir.
+    """
+    allowed = set(re.findall(r"\d+", json.dumps(analysis_dict)))
+
+    invented: list[str] = []
+    for raw in re.findall(r"\d[\d.,]*\d|\d", verdict):
+        digits = raw.replace(".", "").replace(",", "")
+        if not digits.isdigit():
+            continue
+        # 100 ve altini serbest birak: madde numarasi, yuzde, durum kodu olabilir.
+        if int(digits) <= 100:
+            continue
+        if digits in allowed:
+            continue
+        invented.append(raw)
+
+    # Deterministik sirala: uzundan kisaya, esitlikte alfabetik.
+    # set() iterasyon sirasi calistirmaya gore degisir, rapor sabit olmali.
+    return sorted(set(invented), key=lambda s: (-len(s), s))
 
 
 def build_prompt(analysis_dict: dict) -> str:

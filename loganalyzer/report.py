@@ -20,6 +20,7 @@ def to_markdown(
     llm_verdict: str | None = None,
     source: str = "-",
     model: str | None = None,
+    invented_numbers: list[str] | None = None,
 ) -> str:
     a = analysis
     total = a.total_lines or 1
@@ -63,6 +64,16 @@ def to_markdown(
         if model:
             out.append(f"_Model: `{model}` (temperature=0)_")
             out.append("")
+        if invented_numbers:
+            out += [
+                "> **UYARI — asagidaki yorum dogrulanamayan sayi iceriyor.**",
+                "> Su degerler istatistik ozetinde YOK, model uydurmus olabilir: "
+                + ", ".join(f"`{n}`" for n in invented_numbers),
+                ">",
+                "> Yukaridaki tablolardaki sayilar guvenilirdir (deterministik sayimdan gelir).",
+                "> Bu bolumdeki sayilara guvenme.",
+                "",
+            ]
         out.append(llm_verdict)
     else:
         out.append("_LLM analizi atlandi (`--no-llm` veya Ollama erisilemedi)._")
@@ -76,6 +87,7 @@ def to_json(
     llm_verdict: str | None = None,
     source: str = "-",
     model: str | None = None,
+    invented_numbers: list[str] | None = None,
 ) -> str:
     payload = {
         "source": source,
@@ -83,5 +95,6 @@ def to_json(
         "model": model,
         "analysis": analysis.to_dict(),
         "llm_verdict": llm_verdict,
+        "llm_invented_numbers": invented_numbers or [],
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
