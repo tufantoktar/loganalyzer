@@ -28,6 +28,22 @@ class TestParseLine:
         assert entry.timestamp == datetime(2026, 8, 17, 10, 32, 11, 123000)
         assert not entry.is_problem
 
+    def test_bracketed_timestamp_and_level(self):
+        # PM2/node bicimi: [2026-...Z] [INFO] mesaj
+        entry = parse_line('[2026-08-17T12:03:34.830Z] [INFO] Recorder tokens refreshed {"count":30}')
+        assert entry.level == "INFO"
+        assert entry.timestamp == datetime(2026, 8, 17, 12, 3, 34, 830000)
+        # "Recorder" mesajin ilk kelimesi, servis adi degil
+        assert entry.service is None
+        assert entry.message.startswith("Recorder tokens refreshed")
+
+    def test_bare_word_service_needs_separator(self):
+        with_sep = parse_line("2026-08-17 10:00:00 ERROR api-gw - boom")
+        without_sep = parse_line("2026-08-17 10:00:00 ERROR Something bad happened")
+        assert with_sep.service == "api-gw"
+        assert without_sep.service is None
+        assert without_sep.message == "Something bad happened"
+
     def test_warning_normalized_to_warn(self):
         assert parse_line("2026-08-17 10:00:00 WARNING [x] y").level == "WARN"
 

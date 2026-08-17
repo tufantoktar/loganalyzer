@@ -19,12 +19,18 @@ from datetime import datetime
 
 LEVELS = ("TRACE", "DEBUG", "INFO", "NOTICE", "WARN", "WARNING", "ERROR", "FATAL", "CRITICAL")
 
-# 2026-08-17 10:32:11,123 ERROR [payment-svc] Connection refused
-# 2026-08-17T10:32:11Z ERROR payment-svc - Connection refused
+# Desteklenen bicimler:
+#   2026-08-17 10:32:11,123 ERROR [payment-svc] Connection refused
+#   2026-08-17T10:32:11Z ERROR payment-svc - Connection refused
+#   [2026-08-17T12:03:34.830Z] [INFO] Recorder tokens refreshed   <- PM2/node
 PLAIN_RE = re.compile(
-    r"^(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)"
+    # Zaman damgasi parantezli de olabilir: [2026-...] veya 2026-...
+    r"^\[?(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)\]?"
     r"\s+\[?(?P<level>" + "|".join(LEVELS) + r")\]?"
-    r"\s+(?:\[(?P<service>[^\]]+)\]|(?P<service2>[\w.\-]+))?"
+    # Servis adi: ya [koseli parantez] icinde, ya da ardindan ayirici (- veya :)
+    # gelen tek kelime. Ayirici sarti onemli: "[INFO] Recorder tokens refreshed"
+    # satirinda "Recorder" mesajin ilk kelimesidir, servis adi degil.
+    r"\s+(?:\[(?P<service>[^\]]+)\]|(?P<service2>[\w.\-]+)(?=\s*[-:]\s))?"
     r"\s*[-:]?\s*(?P<message>.*)$",
     re.IGNORECASE,
 )
