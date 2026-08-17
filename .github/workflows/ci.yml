@@ -131,13 +131,20 @@ jobs:
       - name: Imaj gercekten calisiyor mu?
         run: docker run --rm -e WAIT_FOR_OLLAMA=false loganalyzer:test --version
 
+      # NOT: Bu action'in etiketleri 'v' onekli olmali. Onceden 0.28.0 gibi
+      # oneksiz etiketler vardi; tedarik zinciri saldirisi sonrasi Aqua Security
+      # tum etiketleri v-onekli hale getirdi ve eskilerini kaldirdi.
+      # Oneksiz surum yazarsan "unable to find version" hatasi alirsin.
       - name: Guvenlik taramasi (trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: loganalyzer:test
           format: table
           severity: HIGH,CRITICAL
           exit-code: "0"        # simdilik sadece raporla, build'i kirma
+        # Tarayicinin kendi sorunu (CVE veritabani indirilemedi vb.) imaj
+        # push'unu engellemesin. Guvenlik bilgisi degerli ama bloke edici degil.
+        continue-on-error: true
 
       # Push sadece main veya tag'de. PR'larda push yok.
       - name: GHCR'a push
