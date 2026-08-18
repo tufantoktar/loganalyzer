@@ -21,6 +21,7 @@ def to_markdown(
     source: str = "-",
     model: str | None = None,
     invented_numbers: list[str] | None = None,
+    wrong_claims: list[str] | None = None,
 ) -> str:
     a = analysis
     total = a.total_lines or 1
@@ -64,14 +65,22 @@ def to_markdown(
         if model:
             out.append(f"_Model: `{model}` (temperature=0)_")
             out.append("")
-        if invented_numbers:
+        if invented_numbers or wrong_claims:
+            out.append("> **UYARI — asagidaki yorum denetimden gecemedi.**")
+            if invented_numbers:
+                out += [
+                    ">",
+                    "> *Dogrulanamayan sayilar:* "
+                    + ", ".join(f"`{n}`" for n in invented_numbers)
+                    + " — bu degerler istatistik ozetinde yok.",
+                ]
+            if wrong_claims:
+                out.append(">")
+                out += [f"> *Yanlis iddia:* {c}" for c in wrong_claims]
             out += [
-                "> **UYARI — asagidaki yorum dogrulanamayan sayi iceriyor.**",
-                "> Su degerler istatistik ozetinde YOK, model uydurmus olabilir: "
-                + ", ".join(f"`{n}`" for n in invented_numbers),
                 ">",
-                "> Yukaridaki tablolardaki sayilar guvenilirdir (deterministik sayimdan gelir).",
-                "> Bu bolumdeki sayilara guvenme.",
+                "> Yukaridaki tablolar guvenilirdir (deterministik sayimdan gelir).",
+                "> Bu bolumu temkinli oku.",
                 "",
             ]
         out.append(llm_verdict)
@@ -88,6 +97,7 @@ def to_json(
     source: str = "-",
     model: str | None = None,
     invented_numbers: list[str] | None = None,
+    wrong_claims: list[str] | None = None,
 ) -> str:
     payload = {
         "source": source,
@@ -96,5 +106,6 @@ def to_json(
         "analysis": analysis.to_dict(),
         "llm_verdict": llm_verdict,
         "llm_invented_numbers": invented_numbers or [],
+        "llm_wrong_claims": wrong_claims or [],
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)

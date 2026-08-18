@@ -198,6 +198,28 @@ def find_invented_numbers(verdict: str, analysis_dict: dict) -> list[str]:
     return sorted(set(invented), key=lambda s: (-len(s), s))
 
 
+# Kucuk modellerin tekrarlayan, kanitlanmis hatalari.
+# Prompt'ta acikca yasaklamak yetmiyor: ayni prompt ve temperature=0 ile bile
+# model girdiye gore kurali cignedi. Duzeltmeye calismak yerine yakaliyoruz.
+WRONG_CLAIM_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        # "404 sunucu tarafi hatadir" -> 4xx istek hatasidir, sunucu hatasi degil
+        re.compile(r"(?<!\d)(4\d{2})(?!\d)[^.\n]{0,70}?sunucu\s*(?:taraf|hata)", re.I),
+        "4xx durum kodu 'sunucu tarafi hata' diye tanimlanmis. "
+        "4xx istek/istemci hatasidir; sunucu hatasi 5xx'tir.",
+    ),
+)
+
+
+def find_wrong_claims(verdict: str) -> list[str]:
+    """Modelin bilinen yanlis iddialarini yakala.
+
+    find_invented_numbers sayilari denetler; bu da anlam duzeyinde
+    kanitlanmis hata kaliplarini denetler.
+    """
+    return [aciklama for pattern, aciklama in WRONG_CLAIM_PATTERNS if pattern.search(verdict)]
+
+
 def build_prompt(analysis_dict: dict) -> str:
     """Analiz sozlugunu kompakt bir prompt'a cevir."""
     lines = [

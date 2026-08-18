@@ -14,7 +14,13 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .ollama_client import OllamaClient, OllamaError, build_prompt, find_invented_numbers
+from .ollama_client import (
+    OllamaClient,
+    OllamaError,
+    build_prompt,
+    find_invented_numbers,
+    find_wrong_claims,
+)
 from .parser import analyze, parse_lines
 from .report import to_json, to_markdown
 
@@ -86,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     verdict = None
     model_name = None
     invented: list[str] = []
+    wrong: list[str] = []
     if not args.no_llm:
         client = OllamaClient(
             host=args.ollama_host or OllamaClient.host,
@@ -101,12 +108,15 @@ def main(argv: list[str] | None = None) -> int:
                     client.ensure_model()
                 verdict = client.chat(build_prompt(analysis.to_dict()))
                 invented = find_invented_numbers(verdict, analysis.to_dict())
+                wrong = find_wrong_claims(verdict)
                 if invented:
                     log.warning(
                         "Model ozette olmayan %d sayi uretti: %s -- rapora uyari eklendi",
                         len(invented),
                         ", ".join(invented[:5]),
                     )
+                for claim in wrong:
+                    log.warning("Model yanlis iddia uretti: %s", claim)
             except OllamaError as exc:
                 log.error("LLM analizi basarisiz: %s", exc)
                 model_name = None
@@ -119,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         source=source,
         model=model_name,
         invented_numbers=invented,
+        wrong_claims=wrong,
     )
 
     if args.out:

@@ -11,6 +11,7 @@ from loganalyzer.ollama_client import (
     OllamaError,
     build_prompt,
     find_invented_numbers,
+    find_wrong_claims,
 )
 
 # qwen2.5:1.5b'nin gercekte urettigi hatali cikti - regresyon icin sabit tutuluyor
@@ -65,6 +66,33 @@ def _response(payload, status=200):
     mock.json.return_value = payload
     mock.raise_for_status.return_value = None
     return mock
+
+
+class TestFindWrongClaims:
+    def test_catches_4xx_labelled_server_error(self):
+        # qwen2.5:3b'nin gercekte urettigi cikti
+        verdict = "- `CLOB /book failed: HTTP404` (204 kez): 404 sunucu tarafi hatadir; clob servis istekleri cikmamis olabilir."
+        assert find_wrong_claims(verdict)
+
+    def test_5xx_as_server_error_is_correct(self):
+        verdict = (
+            "- `CLOB /book failed: HTTP502` (5 kez): 502 sunucu tarafinda hata; saglik durumunu kontrol et."
+        )
+        assert find_wrong_claims(verdict) == []
+
+    def test_correct_404_explanation_passes(self):
+        verdict = "404 kaynak bulunamadi; kayit henuz olusmamis olabilir."
+        assert find_wrong_claims(verdict) == []
+
+    def test_correct_401_explanation_passes(self):
+        verdict = "401 kimlik dogrulama basarisiz; API anahtari eksik veya gecersiz."
+        assert find_wrong_claims(verdict) == []
+
+    def test_glossary_line_not_flagged(self):
+        assert find_wrong_claims("500, 502, 503, 504 sunucu tarafi hatadir.") == []
+
+    def test_empty_verdict(self):
+        assert find_wrong_claims("") == []
 
 
 class TestChat:
