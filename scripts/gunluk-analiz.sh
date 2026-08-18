@@ -8,6 +8,13 @@
 #
 set -Eeuo pipefail
 
+# Cron cok dar bir PATH ile calisir (/usr/bin:/bin). pm2 nvm altinda kurulu
+# oldugu icin cron'dan bulunamiyor ve "pm2 okunamadi" yaziliyordu.
+PM2_BIN="$(command -v pm2 2>/dev/null || true)"
+if [ -z "$PM2_BIN" ]; then
+  PM2_BIN="$(ls -1 /root/.nvm/versions/node/*/bin/pm2 2>/dev/null | tail -1 || true)"
+fi
+
 PROJE=/opt/loganalyzer
 RAPOR=/var/log/loganalyzer
 ERRORS=/root/polymarket-engine/logs/errors.jsonl
@@ -61,18 +68,39 @@ fi
 # ---------------------------------------------------------------------------
 set +e
 .venv/bin/python - "$PM2_OUT" > "$RAPOR/saglik-$TARIH.md" <<'PY'
-import os, re, sys, time
+import glob, os, re, sys, time
 
 path = sys.argv[1]
 pat = re.compile(r"\[collect\]\s+([\d.]+)min\s+.*?ticks=(\d+)\s+books=(\d+)\s+errors=(\d+)")
 
+# pm2-logrotate gece yarisi logu dondurup dosyayi sifirliyor. Sadece guncel
+# dosyaya bakarsak sabahki raporda 24 saatlik gecmis olmuyor. Dondurulmus
+# dosyalari da (en yenisinden baslayarak) okuyoruz.
+# Dosya adlari zaman damgali oldugu icin sirali okuma kronolojik olur.
+klasor, ad = os.path.dirname(path), os.path.basename(path)
+dondurulmus = sorted(glob.glob(os.path.join(klasor, ad.replace(".log", "") + "__*.log")))
+kaynaklar = dondurulmus[-2:] + [path]  # en fazla son 2 arsiv + guncel
+
 rows = []
-with open(path, errors="replace") as f:
-    for line in f:
-        m = pat.search(line)
-        if m:
-            g = m.groups()
-            rows.append((float(g[0]), int(g[1]), int(g[2]), int(g[3])))
+for kaynak in kaynaklar:
+    try:
+        with open(kaynak, errors="replace") as f:
+            for line in f:
+                m = pat.search(line)
+                if m:
+                    g = m.groups()
+                    rows.append((float(g[0]), int(g[1]), int(g[2]), int(g[3])))
+    except OSError:
+        continue
+
+# Surec yeniden baslarsa "dakika" sayaci sifirlanir; sadece son kesintisiz
+# artan diziyi tut, yoksa delta hesabi negatif cikar.
+if rows:
+    bas = 0
+    for i in range(1, len(rows)):
+        if rows[i][0] < rows[i - 1][0]:
+            bas = i
+    rows = rows[bas:]
 
 print("# Saglik Raporu\n")
 if not rows:
@@ -118,7 +146,11 @@ SAGLIK=$?
 set -e
 
 { printf '\n## PM2 Durumu\n\n```\n'
-  pm2 list --no-color 2>/dev/null || echo "pm2 okunamadi"
+  if [ -n "$PM2_BIN" ]; then
+    "$PM2_BIN" list --no-color 2>/dev/null || echo "pm2 calistirilamadi"
+  else
+    echo "pm2 bulunamadi (PATH: $PATH)"
+  fi
   printf '```\n'
 } >> "$RAPOR/saglik-$TARIH.md"
 
