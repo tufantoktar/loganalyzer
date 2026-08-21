@@ -8,12 +8,17 @@
 #
 set -Eeuo pipefail
 
-# Cron cok dar bir PATH ile calisir (/usr/bin:/bin). pm2 nvm altinda kurulu
-# oldugu icin cron'dan bulunamiyor ve "pm2 okunamadi" yaziliyordu.
-PM2_BIN="$(command -v pm2 2>/dev/null || true)"
-if [ -z "$PM2_BIN" ]; then
-  PM2_BIN="$(ls -1 /root/.nvm/versions/node/*/bin/pm2 2>/dev/null | tail -1 || true)"
+# Cron cok dar bir PATH ile calisir (/usr/bin:/bin).
+#
+# DIKKAT: pm2'nin yolunu bulmak TEK BASINA YETMIYOR. pm2 bir node scriptidir;
+# calisirken 'node'u PATH'te arar. Sadece pm2 yolunu cozersek
+# "env: 'node': No such file or directory" alinir. Bu yuzden nvm'in bin
+# dizinini komple PATH'e ekliyoruz -- node ve pm2 birlikte gelsin.
+NODE_BIN="$(ls -d /root/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1 || true)"
+if [ -n "$NODE_BIN" ]; then
+  export PATH="$NODE_BIN:$PATH"
 fi
+PM2_BIN="$(command -v pm2 2>/dev/null || true)"
 
 PROJE=/opt/loganalyzer
 RAPOR=/var/log/loganalyzer
